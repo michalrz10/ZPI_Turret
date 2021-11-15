@@ -11,10 +11,12 @@
 
 
 #include <Servo.h>
+#include <MPU9255.h>
 float y=0, nextY=0;
 float x=0, nextX=0;
 char serialBuffer[10];
 Servo serwomechanizm;
+MPU9255 mpu;
 float krok = 0.25 * 0.9;
 int stepDelay = 500;
 
@@ -22,7 +24,7 @@ void setup() {
   // put your setup code here, to run once:
   Serial.begin(9600);
   serwomechanizm.attach(servoPin);
-  
+  mpu.init();
   pinMode(shoot, OUTPUT);
   pinMode(stepU,OUTPUT);
   pinMode(dirU,OUTPUT);
@@ -38,12 +40,12 @@ void setup() {
   digitalWrite(ms3,LOW);
   
   digitalWrite(shoot,HIGH);
-  /*digitalWrite(stepU,LOW);
+  
+  digitalWrite(stepU,LOW);
   digitalWrite(stepD,LOW);
   digitalWrite(dirU,LOW);
-  digitalWrite(dirD,LOW);*/
+  digitalWrite(dirD,LOW);
   
-  configuration();
 }
 
 void loop() {
@@ -70,7 +72,7 @@ void loop() {
     else if(serialBuffer[0] == 1)
     {
       digitalWrite(shoot,LOW);
-      delay(180);
+      delay(225);
       digitalWrite(shoot,HIGH);
     }
     else if(serialBuffer[0] == 2)
@@ -103,7 +105,6 @@ void loop() {
     }
     else if(serialBuffer[0] == 4)
     {
-      Serial.println(serialBuffer);
       int nextDelay;
       ((uint8_t*)&nextDelay)[0]=serialBuffer[1];
       ((uint8_t*)&nextDelay)[1]=serialBuffer[2];
@@ -120,7 +121,6 @@ void loop() {
         digitalWrite(ms2,LOW);
         digitalWrite(ms3,LOW);
         krok = 0.9;
-        Serial.println("1");
       }
       else if(serialBuffer[1] == 2)
       {
@@ -150,6 +150,10 @@ void loop() {
         digitalWrite(ms3,HIGH);
         krok = 0.9 * 0.0625;
       }
+    }
+    else if(serialBuffer[0] == 6)
+    {
+      configuration();
     }
   }
 
@@ -193,24 +197,45 @@ void loop() {
 
 bool checkReady()
 {
-  if(abs(x-nextY)<krok && abs(y-nextY)<krok) return true;
+  if(abs(x-nextX)<krok && abs(y-nextY)<krok) return true;
   return false;
 }
 
 
 void configuration()
 {
+  digitalWrite(ms1,HIGH);
+  digitalWrite(ms2,HIGH);
+  digitalWrite(ms3,HIGH);
+  delay(1000);
   serwomechanizm.write(180);
   delay(1000);
   while(digitalRead(xSen)==HIGH)
   {
     digitalWrite(dirD,HIGH);
     digitalWrite(stepD,HIGH);
-    delayMicroseconds(5000);
+    delayMicroseconds(2000);
     digitalWrite(stepD,LOW);
-    delayMicroseconds(5000);
+    delayMicroseconds(2000);
   }
   serwomechanizm.write(0);
-
-  //config Y
+  delay(1000);
+  mpu.read_acc();
+  while(mpu.ay/16384.0>0)
+  {
+    digitalWrite(dirU,HIGH);
+    digitalWrite(stepU,HIGH);
+    delayMicroseconds(12000);
+    digitalWrite(stepU,LOW);
+    delayMicroseconds(12000);
+    mpu.read_acc();
+  }
+  delay(1000);
+  digitalWrite(ms1,LOW);
+  digitalWrite(ms2,HIGH);
+  digitalWrite(ms3,LOW);
+  krok = 0.9 * 0.25;
+  stepDelay = 500;
+  x=0;
+  y=0; 
 }
