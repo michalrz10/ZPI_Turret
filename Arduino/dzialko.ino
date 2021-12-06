@@ -2,7 +2,7 @@
 #define dirU 3
 #define stepD 4
 #define dirD 5
-#define shoot 8
+#define shoot 7
 #define servoPin 9
 #define xSen 6
 #define ms1 11
@@ -12,19 +12,27 @@
 
 #include <Servo.h>
 #include <MPU9255.h>
+#include <Kalman.h>
 float y=0, nextY=0;
 float x=0, nextX=0;
 char serialBuffer[10];
 Servo serwomechanizm;
 MPU9255 mpu;
-float krok = 0.25 * 0.9;
-int stepDelay = 500;
+float krok = 0.9 * 0.0625;
+int stepDelay = 250;
+bool actionshoot = false;
+bool actionconfig = false;
+Kalman kalmanX;
+Kalman kalmanY;
+
 
 void setup() {
   // put your setup code here, to run once:
-  Serial.begin(9600);
+  Serial.begin(115200);
   serwomechanizm.attach(servoPin);
   mpu.init();
+  mpu.set_acc_scale(scale_2g);
+  mpu.set_gyro_scale(scale_250dps);
   pinMode(shoot, OUTPUT);
   pinMode(stepU,OUTPUT);
   pinMode(dirU,OUTPUT);
@@ -36,8 +44,8 @@ void setup() {
   pinMode(xSen,INPUT_PULLUP);
 
   digitalWrite(ms2,HIGH);
-  digitalWrite(ms1,LOW);
-  digitalWrite(ms3,LOW);
+  digitalWrite(ms1,HIGH);
+  digitalWrite(ms3,HIGH);
   
   digitalWrite(shoot,HIGH);
   
@@ -50,8 +58,62 @@ void setup() {
 
 void loop() {
   // put your main code here, to run repeatedly:
-  if (Serial.available()>=10) {
-    Serial.readBytes(serialBuffer,10);
+  readData();
+
+  if(x-krok > nextX)
+  {
+    digitalWrite(dirD,HIGH);
+    digitalWrite(stepD,HIGH);
+    delayMicroseconds(stepDelay);
+    digitalWrite(stepD,LOW);
+    delayMicroseconds(stepDelay);
+    x-=krok;
+  }
+  if(y-krok > nextY)
+  {
+    digitalWrite(dirU,LOW);
+    digitalWrite(stepU,HIGH);
+    delayMicroseconds(stepDelay);
+    digitalWrite(stepU,LOW);
+    delayMicroseconds(stepDelay);
+    y-=krok;
+  }
+  if(x+krok < nextX)
+  {
+    digitalWrite(dirD,LOW);
+    digitalWrite(stepD,HIGH);
+    delayMicroseconds(stepDelay);
+    digitalWrite(stepD,LOW);
+    delayMicroseconds(stepDelay);
+    x+=krok;
+  }
+  if(y+krok < nextY)
+  {
+    digitalWrite(dirU,HIGH);
+    digitalWrite(stepU,HIGH);
+    delayMicroseconds(stepDelay);
+    digitalWrite(stepU,LOW);
+    delayMicroseconds(stepDelay);
+    y+=krok;
+  }
+  if(actionconfig)
+  {
+    configuration();
+    actionconfig = false;
+  }
+  if(actionshoot)
+  {
+    digitalWrite(shoot,LOW);
+    delay(300);
+    digitalWrite(shoot,HIGH);
+    actionshoot = false;
+  }
+}
+
+void readData()
+{
+  while (Serial.available()>=16) {
+    Serial.readBytes(serialBuffer,16);
     
     if(serialBuffer[0] == 0)
     {
@@ -71,9 +133,7 @@ void loop() {
     }
     else if(serialBuffer[0] == 1)
     {
-      digitalWrite(shoot,LOW);
-      delay(225);
-      digitalWrite(shoot,HIGH);
+      actionshoot = true;
     }
     else if(serialBuffer[0] == 2)
     {
@@ -153,46 +213,9 @@ void loop() {
     }
     else if(serialBuffer[0] == 6)
     {
-      configuration();
+      actionconfig = true;
     }
   }
-
-  if(x-krok > nextX)
-  {
-    digitalWrite(dirD,HIGH);
-    digitalWrite(stepD,HIGH);
-    delayMicroseconds(stepDelay);
-    digitalWrite(stepD,LOW);
-    delayMicroseconds(stepDelay);
-    x-=krok;
-  }
-  if(y-krok > nextY)
-  {
-    digitalWrite(dirU,LOW);
-    digitalWrite(stepU,HIGH);
-    delayMicroseconds(stepDelay);
-    digitalWrite(stepU,LOW);
-    delayMicroseconds(stepDelay);
-    y-=krok;
-  }
-  if(x+krok < nextX)
-  {
-    digitalWrite(dirD,LOW);
-    digitalWrite(stepD,HIGH);
-    delayMicroseconds(stepDelay);
-    digitalWrite(stepD,LOW);
-    delayMicroseconds(stepDelay);
-    x+=krok;
-  }
-  if(y+krok < nextY)
-  {
-    digitalWrite(dirU,HIGH);
-    digitalWrite(stepU,HIGH);
-    delayMicroseconds(stepDelay);
-    digitalWrite(stepU,LOW);
-    delayMicroseconds(stepDelay);
-    y+=krok;
-  }  
 }
 
 bool checkReady()
@@ -207,19 +230,109 @@ void configuration()
   digitalWrite(ms1,HIGH);
   digitalWrite(ms2,HIGH);
   digitalWrite(ms3,HIGH);
-  delay(1000);
+  for(int i=0; i<800; i++)
+  {
+    digitalWrite(dirD,LOW);
+    digitalWrite(stepD,HIGH);
+    delayMicroseconds(300);
+    digitalWrite(stepD,LOW);
+    delayMicroseconds(300);
+  }
+  readData();
   serwomechanizm.write(180);
   delay(1000);
   while(digitalRead(xSen)==HIGH)
   {
     digitalWrite(dirD,HIGH);
     digitalWrite(stepD,HIGH);
-    delayMicroseconds(2000);
+    delayMicroseconds(300);
     digitalWrite(stepD,LOW);
-    delayMicroseconds(2000);
+    delayMicroseconds(300);
   }
   serwomechanizm.write(0);
   delay(1000);
+  readData();
+  double accX, accY, accZ;
+  double gyroX, gyroY, gyroZ;
+  
+  double gyroXangle, gyroYangle; // Angle calculate using the gyro only
+  double compAngleX, compAngleY; // Calculated angle using a complementary filter
+  double kalAngleX, kalAngleY; // Calculated angle using a Kalman filter
+
+  uint32_t timer;
+  mpu.read_acc();
+  accX = mpu.ax;
+  accY = mpu.ay;
+  accZ = mpu.az;
+  double roll  = atan(accY / sqrt(accX * accX + accZ * accZ)) * RAD_TO_DEG;
+  double pitch = atan2(-accX, accZ) * RAD_TO_DEG;
+  kalmanX.setAngle(roll); // Set starting angle
+  kalmanY.setAngle(pitch);
+  gyroXangle = roll;
+  gyroYangle = pitch;
+  compAngleX = roll;
+  compAngleY = pitch;
+  timer = micros();
+  while(abs(compAngleX)>0.01)
+  {
+    mpu.read_acc();
+    mpu.read_gyro();
+    accX = mpu.ax;
+    accY = mpu.ay;
+    accZ = mpu.az;
+    gyroX = mpu.gx;
+    gyroY = mpu.gy;
+    gyroZ = mpu.gz;
+    double dt = (double)(micros() - timer) / 1000000;
+    timer = micros();
+    roll  = atan(accY / sqrt(accX * accX + accZ * accZ)) * RAD_TO_DEG;
+    pitch = atan2(-accX, accZ) * RAD_TO_DEG;
+    double gyroXrate = gyroX / 131.0; // Convert to deg/s
+    double gyroYrate = gyroY / 131.0; // Convert to deg/s
+    if ((pitch < -90 && kalAngleY > 90) || (pitch > 90 && kalAngleY < -90)) {
+    kalmanY.setAngle(pitch);
+    compAngleY = pitch;
+    kalAngleY = pitch;
+    gyroYangle = pitch;
+  } else
+    kalAngleY = kalmanY.getAngle(pitch, gyroYrate, dt); // Calculate the angle using a Kalman filter
+
+  if (abs(kalAngleY) > 90)
+    gyroXrate = -gyroXrate; // Invert rate, so it fits the restriced accelerometer reading
+  kalAngleX = kalmanX.getAngle(roll, gyroXrate, dt); // Calculate the angle using a Kalman filter
+    gyroXangle += gyroXrate * dt; // Calculate gyro angle without any filter
+  gyroYangle += gyroYrate * dt;
+  //gyroXangle += kalmanX.getRate() * dt; // Calculate gyro angle using the unbiased rate
+  //gyroYangle += kalmanY.getRate() * dt;
+
+  compAngleX = 0.93 * (compAngleX + gyroXrate * dt) + 0.07 * roll;
+  compAngleY = 0.93 * (compAngleY + gyroYrate * dt) + 0.07 * pitch;
+
+  // Reset the gyro angle when it has drifted too much
+  if (gyroXangle < -180 || gyroXangle > 180)
+    gyroXangle = kalAngleX;
+  if (gyroYangle < -180 || gyroYangle > 180)
+    gyroYangle = kalAngleY;
+    
+    if(compAngleX>0)
+    {
+      digitalWrite(dirU,HIGH);
+      digitalWrite(stepU,HIGH);
+      delayMicroseconds(250);
+      digitalWrite(stepU,LOW);
+      delayMicroseconds(250);
+    }
+    else
+    {
+      digitalWrite(dirU,LOW);
+      digitalWrite(stepU,HIGH);
+      delayMicroseconds(250);
+      digitalWrite(stepU,LOW);
+      delayMicroseconds(250);
+    }
+  }
+  
+  /*delay(1000);
   mpu.read_acc();
   while(mpu.ay/16384.0>0)
   {
@@ -229,13 +342,10 @@ void configuration()
     digitalWrite(stepU,LOW);
     delayMicroseconds(12000);
     mpu.read_acc();
-  }
-  delay(1000);
-  digitalWrite(ms1,LOW);
-  digitalWrite(ms2,HIGH);
-  digitalWrite(ms3,LOW);
-  krok = 0.9 * 0.25;
-  stepDelay = 500;
+  }*/
+  
+  krok = 0.9 * 0.0625;
   x=0;
-  y=0; 
+  y=0;
+  Serial.write(255); 
 }
