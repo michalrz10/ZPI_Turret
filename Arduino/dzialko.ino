@@ -4,6 +4,7 @@
 #define dirD 5
 #define shoot 7
 #define servoPin 9
+#define servoPower 10
 #define xSen 6
 #define ms1 11
 #define ms2 12
@@ -34,6 +35,7 @@ void setup() {
   mpu.set_acc_scale(scale_2g);
   mpu.set_gyro_scale(scale_250dps);
   pinMode(shoot, OUTPUT);
+  pinMode(servoPower,OUTPUT);
   pinMode(stepU,OUTPUT);
   pinMode(dirU,OUTPUT);
   pinMode(stepD,OUTPUT);
@@ -227,6 +229,7 @@ bool checkReady()
 
 void configuration()
 {
+  digitalWrite(servoPower,HIGH);
   digitalWrite(ms1,HIGH);
   digitalWrite(ms2,HIGH);
   digitalWrite(ms3,HIGH);
@@ -347,5 +350,6 @@ void configuration()
   krok = 0.9 * 0.0625;
   x=0;
   y=0;
+  digitalWrite(servoPower,LOW);
   Serial.write(255); 
 }
